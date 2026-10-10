@@ -1,0 +1,156 @@
+from flask import Flask
+from werkzeug.middleware.proxy_fix import ProxyFix
+from extensions import db, login_manager, admin, migrate, init_app
+from models.user import User
+import os
+from dotenv import load_dotenv
+import logging
+
+# Load environment variables from .env file
+load_dotenv()
+
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
+
+def create_app():
+    app = Flask(__name__)
+
+    # Configure logging: console + file for error review
+    log_level = logging.DEBUG if os.getenv("DEBUG", "False").lower() == "true" else logging.INFO
+    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    logging.basicConfig(level=log_level, format=log_format)
+    logger = logging.getLogger(__name__)
+    try:
+        log_dir = os.path.dirname(os.path.abspath(__file__))
+        log_file = os.path.join(log_dir, "atems.log")
+        fh = logging.FileHandler(log_file, encoding="utf-8")
+        fh.setLevel(log_level)
+        fh.setFormatter(logging.Formatter(log_format))
+        logging.getLogger().addHandler(fh)
+    except Exception as _e:
+        import sys
+        logging.getLogger(__name__).warning("Could not add atems.log file handler: %s", _e)
+        print(f"Could not add atems.log handler: {_e}", file=sys.stderr)
+    
+    try:
+        # Set the database URI from environment variable
+        app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("SQLALCHEMY_DATABASE_URI")
+        if not app.config["SQLALCHEMY_DATABASE_URI"]:
+            raise ValueError("No SQLALCHEMY_DATABASE_URI set in environment variables.")
+    except Exception as e:
+        logger.error(f"Error setting database URI: {e}")
+        raise
+
+    # Set the secret key from environment variable
+    app.config["SECRET_KEY"] = os.getenv("SECRET_KEY")
+    if not app.config["SECRET_KEY"]:
+        raise ValueError("No SECRET_KEY set in environment variables.")
+    
+    # Set the debug mode from environment variable
+    app.config["DEBUG"] = os.getenv("DEBUG", "False").lower() == "true"
+
+    # CSRF defence-in-depth (review 2026-09-25): browsers do not send the session
+    # cookie on cross-site POSTs/fetches when it is SameSite=Lax.
+    app.config["SESSION_COOKIE_SAMESITE"] = os.getenv("SESSION_COOKIE_SAMESITE", "Lax")
+
+    # When deployed under subpath (e.g. ), set SCRIPT_NAME so url_for generates correct links
+    app_root = (os.getenv("APPLICATION_ROOT", "") or "").strip().rstrip("/")
+    if app_root and app_root != "/":
+        app.config["APPLICATION_ROOT"] = app_root
+
+        class ScriptNameMiddleware:
+            def __init__(self, app, script_name):
+                self.app = app
+                self.script_name = script_name
+
+            def __call__(self, environ, start_response):
+                environ["SCRIPT_NAME"] = self.script_name
+                return self.app(environ, start_response)
+
+        app.wsgi_app = ScriptNameMiddleware(app.wsgi_app, app_root)
+
+    # Trust X-Forwarded-* headers when behind nginx (fixes https URLs, correct Host)
+    if not app.config["DEBUG"] or os.getenv("USE_PROXY_FIX", "").lower() == "true":
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
+    # Request timing: log [PERF] timestamp method path duration_ms (set ATEMS_PERF_LOG_THRESHOLD_MS=0 to log all)
+    try:
+        from utils.performance import get_request_timing_middleware
+        app.wsgi_app = get_request_timing_middleware(app.wsgi_app)
+    except Exception as e:
+        logger.warning("Request timing middleware not installed: %s", e)
+
+    # Initialize extensions (init_app does db, login_manager, admin, migrate)
+    init_app(app)
+
+    # Ensure all tables exist (fixes "no such table" when using a new or different database)
+    with app.app_context():
+        from models import Tools, CheckoutHistory  # ensure all models registered for create_all
+        db.create_all()
+        # If no users exist, bootstrap the first admin from ADMIN_USERNAME/ADMIN_PASSWORD.
+        # There is no built-in default password: in production a missing ADMIN_PASSWORD
+        # fails fast (see utils/auth_security.py); in development/test bootstrap is skipped.
+        if User.query.count() == 0:
+            from utils.auth_security import get_bootstrap_admin_credentials
+            creds = get_bootstrap_admin_credentials()
+            if creds is None:
+                logger.warning(
+                    "No users exist and ADMIN_PASSWORD is not set; skipping admin bootstrap "
+                    "(non-production ENVIRONMENT). Set ADMIN_PASSWORD to create the first admin."
+                )
+            else:
+                admin_username, admin_password, admin_email = creds
+                admin_user = User(
+                    first_name="System",
+                    last_name="Administrator",
+                    username=admin_username,
+                    email=admin_email,
+                    badge_id="ADMIN001",
+                    phone="5550000000",
+                    department="ATEMS",
+                    role="admin",
+                    supervisor_username=admin_username,
+                    supervisor_email=admin_email,
+                    supervisor_phone="5550000000",
+                )
+                admin_user.set_password(admin_password)
+                db.session.add(admin_user)
+                db.session.commit()
+                logger.info("Created initial admin user '%s' from ADMIN_USERNAME/ADMIN_PASSWORD.", admin_username)
+    logger.info("Application initialized successfully.")
+
+    # Register blueprints
+    from routes import bp
+    app.register_blueprint(bp)
+
+    from metrics import metrics_bp
+    app.register_blueprint(metrics_bp)
+
+    # API JSON errors + X-Request-ID (see utils/api_error_handlers.py)
+    from utils.api_error_handlers import register_api_error_handlers
+    register_api_error_handlers(app)
+
+    # Run startup self-tests (log to atems.log for error review).
+    # Failures are logged at ERROR level (they used to be a single WARNING, which hid
+    # e.g. the selftest package missing from the Docker image). They do not stop startup.
+    try:
+        from selftest.startup import run_startup_selftests
+        _passed, _failed, _results = run_startup_selftests(app=app, logger=logger)
+        if _failed:
+            failed_names = ", ".join(r["name"] for r in _results if not r.get("passed"))
+            logger.error("[SELFTEST] %d startup self-test(s) failed: %s", _failed, failed_names)
+    except ImportError as e:
+        logger.error(
+            "[SELFTEST] selftest package could not be imported (%s); /api/system/health and "
+            "/api/system/run-tests will not work. Is selftest/ included in the image?", e,
+        )
+    except Exception:
+        logger.exception("[SELFTEST] Startup self-tests crashed")
+
+    return app
+
+app = create_app()
+
+if __name__ == '__main__':
+    app.run(debug=app.config["DEBUG"])

@@ -1,0 +1,103 @@
+# ATEMS - Docker Compose Configuration
+# atems-api uses user: ${HOST_UID}:${HOST_GID} so bind-mounted app dirs (if present) stay owned by the host deploy user.
+# For manual compose: . ./scripts/export_compose_uid_gid.sh && write_compose_host_user_env "$PWD" ; pass --env-file .env.compose-host-user to docker compose.
+
+# ⚠️ CRITICAL - DO NOT MODIFY:
+#    - Network names: tunnel_network (cf-alfa) + atems-network (postgres)
+#    - Port 5000: Coordinated with nginx, tunnel routing, monitoring
+#    - 127.0.0.1 binding: Security requirement (APIs localhost only)
+#    - See: .github/PORT_ASSIGNMENTS.md for complete reference
+services:
+  # ============================================================================
+  # PostgreSQL Database for ATEMS
+  # ============================================================================
+  atems-postgres:
+    image: postgres:16.14-alpine
+    container_name: atems-postgres
+    environment:
+      POSTGRES_DB: atems
+      POSTGRES_USER: atems_user
+      # Required, no fallback: compose refuses to start if POSTGRES_PASSWORD is unset/empty.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF-8"
+    # Host-local only (security review 2026-09-25 #14). Host tools use 127.0.0.1:5436;
+    # the API reaches Postgres over atems-network.
+    ports:
+      - "127.0.0.1:5436:5432"
+    volumes:
+      - atems-postgres-data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    networks:
+      - app
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atems_user -d atems"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    command: 
+      - "postgres"
+      - "-c"
+      - "max_connections=100"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "effective_cache_size=1GB"
+      - "-c"
+      - "work_mem=16MB"
+
+  # ============================================================================
+  # ATEMS API (Flask Application)
+  # ============================================================================
+  atems-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: atems-api
+    # Host deploy user (e.g. ansible): scripts/export_compose_uid_gid.sh sets HOST_UID/HOST_GID
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    environment:
+      - ENVIRONMENT=production
+      - PORT=5000
+      - DATABASE_URL=postgresql://atems_user:${POSTGRES_PASSWORD}@atems-postgres:5432/atems
+      - SQLALCHEMY_DATABASE_URI=postgresql://atems_user:${POSTGRES_PASSWORD}@atems-postgres:5432/atems
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be set in .env}
+      # First-admin bootstrap + optional env logins (no defaults; see README "Security").
+      # ADMIN_PASSWORD is required on first boot against an empty database.
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-}
+      - USER_USERNAME=${USER_USERNAME:-}
+      - USER_PASSWORD=${USER_PASSWORD:-}
+      - DEBUG=False
+      - GUNICORN_WORKERS=4
+    # Using 127.0.0.1 for security - only nginx can access via Docker network
+    ports:
+      - "127.0.0.1:5000:5000"
+    depends_on:
+      atems-postgres:
+        condition: service_healthy
+    networks:
+      - app
+    restart: unless-stopped
+    # Use JSON health endpoint (same as rankings-bot style probes); python base image has no curl.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/api/health', timeout=4)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  atems-postgres-data:
+
+networks:
+  app:
+    driver: bridge
