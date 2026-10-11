@@ -15,7 +15,7 @@ Overview:
 
 ATEMS is an inventory control software for tools rooms, warehouses, supply chain operations. 
 
-I am a US Air Force (F-16 crew chief) Vet who has worked in the tool room/supplychain supervisor postion, also in farming, trucking, retail, nuclear, cyber sec industries. This software will be advanced enough to work in any of those enviroments or for a small business too.
+ATEMS is inventory software for tool rooms, warehouses, and other stockrooms. The base program stays the same; add only the modules you need.
 
 The approach here is to be as modularized as possible. Where the basic program stays the same and you just plug-in the modules you need for your particular industry. 
 
@@ -84,4 +84,4 @@ If you encounter any issues or have feedback, please create an issue on the GitH
 
 Happy tracking with ATEMS!
 
-I dont know it all about inventory software. and am new to github and programming so if there's any help you can give or a industry you can make a module for that would be great! 
+Open a GitHub issue if something does not work.

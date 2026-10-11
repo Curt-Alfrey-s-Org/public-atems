@@ -34,7 +34,7 @@ This repo pulls pip and npm deps through the server-wide cache at **`/srv/dep-ca
 See `/home/operator/.github/PORT_ASSIGNMENTS.md` for the canonical list.
 
 - **API host binding:** `127.0.0.1:5000`
-- **Database host binding:** `5436:5432`
+- **Database host binding:** `127.0.0.1:5436` (container `5432`)
 
 **Login:** Root `/` shows a splash screen with login. There are **no default credentials**. The first admin comes from `ADMIN_USERNAME` / `ADMIN_PASSWORD` (see [Security & required environment](#security--required-environment)). To create demo users, run `ADMIN_PASSWORD=... USER_PASSWORD=... python scripts/seed_demo_users.py`.
 
@@ -110,7 +110,7 @@ Files for deploying ATEMS to https://example.com/app/atems.
 | `deploy_atems_postgres.sh` | **Quick Start** — Deploy ATEMS with PostgreSQL (Docker) |
 | `docker-compose.yml` | Docker services: PostgreSQL + ATEMS API |
 | `POSTGRESQL_MIGRATION.md` | PostgreSQL migration guide (SQLite → PostgreSQL) |
-| `RUN_ON_SERVER.md` | **Systemd** — Run ATEMS directly on server 105 |
+| `RUN_ON_SERVER.md` | **Systemd** - Run ATEMS on the app host |
 | `NGINX_DEPLOYMENT.md` | Nginx reverse proxy setup (current standard) |
 | `web-sites-server/nginx-atems.conf` | Nginx site config (copy to /etc/nginx/sites-available/atems) |
 | `web-sites-server/atems.service` | systemd unit for gunicorn |
