@@ -26,5 +26,5 @@ Public URL example: `https://atems.example.com` ([RFC 2606](https://www.rfc-edit
 - `docs/REPO_HOST_MAPPING.md` (cluster inventory)
 - `.cursor/` operator rules tied to this deployment
 - Non-example env files (`.env`, `.env.compose-host-user`, etc.)
-- `MYSQL_CREDENTIAL_CHANGE.md` replaced with a generic rotation note (no live hosts or passwords)
+- `docs/history/MYSQL_CREDENTIAL_CHANGE.md` — generic credential rotation note (no live hosts or passwords)
 - External `tunnel_network` removed from Compose; services use a local `app` network only

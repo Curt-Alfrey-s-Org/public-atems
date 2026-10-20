@@ -1,122 +1,91 @@
-# ATEMS (public snapshot)
+# ATEMS
 
-Asset and test equipment management (Flask API + PostgreSQL). This repository is a **scrubbed
-snapshot**; see `docs/PUBLIC_SNAPSHOT.md`.
+**Automated Tool and Equipment Management System** — inventory, check-in/out, calibration
+tracking, and reporting for tool rooms and warehouses. Flask API backed by PostgreSQL.
 
-## Configure before you run
+This tree is a public snapshot; background is in [`docs/PUBLIC_SNAPSHOT.md`](docs/PUBLIC_SNAPSHOT.md).
 
-1. Copy `config/hosts.example.env` to `config/hosts.env` and set your ATEMS host and public URL (do not commit `hosts.env`).
-2. Copy `.env.example` to `.env` and replace every `change-me` placeholder. Required: **`POSTGRES_PASSWORD`**, **`SECRET_KEY`**, and **`SQLALCHEMY_DATABASE_URI`** (or `DATABASE_URL`). Never commit `.env`.
-3. Optional: set **`PORT`** for the API listen port (Compose defaults to `5000` on `127.0.0.1`).
+## Requirements
 
-## Run (Docker)
+- [Docker Engine](https://docs.docker.com/engine/install/) with the [Compose plugin](https://docs.docker.com/compose/install/)
+- Enough disk for a PostgreSQL 16 data volume and the API image build (see [`Dockerfile`](Dockerfile))
 
-```bash
-docker compose up -d
-```
+Official references: [Compose file reference](https://docs.docker.com/compose/compose-file/),
+[PostgreSQL Docker image](https://hub.docker.com/_/postgres) (`postgres:16.14-alpine` in
+[`docker-compose.yml`](docker-compose.yml)).
 
-See `docs/PUBLIC_SNAPSHOT.md` and `docker-compose.yml` for services and health checks.
+## Quick start (Docker Compose)
 
----
+From the repository root:
 
-# ATEMS — Automated Tool & Equipment Management System
+1. **Create `.env`**
 
-Inventory control software for tool rooms, warehouses, and supply chain operations.
+   ```bash
+   cp .env.example .env
+   ```
 
-**Workspace:** [All bots overview](../docs/BOTS_OVERVIEW.md) · [Quick reference](../docs/QUICK_REFERENCE.md)
+   Edit [`.env.example`](.env.example) copy and replace every `change-me` placeholder. These are
+   **required** for Compose (no in-repo defaults):
 
-## Shared dependency cache
+   | Variable | Purpose |
+   |----------|---------|
+   | `POSTGRES_PASSWORD` | PostgreSQL password for user `atems_user` (Compose fails if unset) |
+   | `SECRET_KEY` | Flask session signing key (Compose fails if unset) |
+   | `ADMIN_PASSWORD` | Creates the first admin when the database has no users yet |
 
-This repo pulls pip and npm deps through the server-wide cache at **`/srv/dep-cache`** so containers and host builds don't redownload packages between rebuilds. `Dockerfile` uses BuildKit cache mounts with shared id `bots-pip`; `scripts/build_on_server.sh` points npm at `/srv/dep-cache/npm`. Manage with `/srv/dep-cache/bin/dep-cache {status,prune --older-than 30d,clear}`. Details: `/srv/dep-cache/README.md`.
+   Optional: `ADMIN_USERNAME` (default `admin`), `ADMIN_EMAIL`, `USER_USERNAME` / `USER_PASSWORD`
+   for an extra env-based login. Do not commit `.env`.
 
-## Production Ports (Server)
+   Inside Compose, the API uses `DATABASE_URL` built from `POSTGRES_PASSWORD`; you do not need
+   to change `SQLALCHEMY_DATABASE_URI` in `.env` for the default stack.
 
-See `/home/operator/.github/PORT_ASSIGNMENTS.md` for the canonical list.
+2. **Start services**
 
-- **API host binding:** `127.0.0.1:5000`
-- **Database host binding:** `127.0.0.1:5436` (container `5432`)
+   ```bash
+   docker compose --env-file .env up -d --build
+   ```
 
-**Login:** Root `/` shows a splash screen with login. There are **no default credentials**. The first admin comes from `ADMIN_USERNAME` / `ADMIN_PASSWORD` (see [Security & required environment](#security--required-environment)). To create demo users, run `ADMIN_PASSWORD=... USER_PASSWORD=... python scripts/seed_demo_users.py`.
+   Services are defined in [`docker-compose.yml`](docker-compose.yml): `atems-postgres` (health
+   check via `pg_isready`) and `atems-api` (starts after Postgres is healthy).
 
----
+3. **Open the app**
 
-## Quick Start (Docker + PostgreSQL)
+   The API is published on the host at **`http://127.0.0.1:5000`** (`127.0.0.1:5000:5000` in
+   Compose). Postgres is on **`127.0.0.1:5436`** if you need host-side tools.
 
-**Recommended for production:**
+   Log in with `ADMIN_USERNAME` / `ADMIN_PASSWORD` from `.env`. There are no built-in demo
+   passwords.
 
-```bash
-cd /home/operator/atems
+4. **Check health (optional)**
 
-# 1. Configure environment
-cp .env.example .env
-nano .env  # Set POSTGRES_PASSWORD, SECRET_KEY and ADMIN_PASSWORD (required, no defaults)
+   ```bash
+   curl -fsS http://127.0.0.1:5000/api/health
+   ```
 
-# 2. Deploy with script
-./deploy_atems_postgres.sh
+## Security notes
 
-# 3. Access ATEMS
-# http://localhost:5000
-# Login: ADMIN_USERNAME / ADMIN_PASSWORD from .env
-```
+- Compose refuses empty `POSTGRES_PASSWORD` or `SECRET_KEY` (see
+  [`docker-compose.yml`](docker-compose.yml)).
+- On first boot against an empty database, set a strong `ADMIN_PASSWORD`; known weak passwords
+  are rejected at login.
+- Bind mounts use `user: ${HOST_UID:-1000}:${HOST_GID:-1000}` on the API service. On Linux, if
+  file ownership matters, export `HOST_UID` / `HOST_GID` or use
+  [`scripts/export_compose_uid_gid.sh`](scripts/export_compose_uid_gid.sh) to generate
+  `.env.compose-host-user` and pass `--env-file .env.compose-host-user` as well.
 
-**Database:** PostgreSQL 16 (port 5436, bound to 127.0.0.1) · See [POSTGRESQL_MIGRATION.md](POSTGRESQL_MIGRATION.md)
+## Development (without Docker)
 
----
+Python 3 with dependencies from [`requirements.txt`](requirements.txt) and a PostgreSQL instance
+you configure yourself. Set `ENVIRONMENT=development` and provide `SECRET_KEY` and
+`SQLALCHEMY_DATABASE_URI`. See [`atems.py`](atems.py) and [`migrations/`](migrations/) for Flask
+and Alembic layout.
 
-## Security & required environment
+## More documentation
 
-As of the 2026-09-25 security review, ATEMS ships with **no default credentials**.
+| Topic | File |
+|-------|------|
+| Snapshot scope | [`docs/PUBLIC_SNAPSHOT.md`](docs/PUBLIC_SNAPSHOT.md) |
+| SQLite to PostgreSQL | [`POSTGRESQL_MIGRATION.md`](POSTGRESQL_MIGRATION.md) |
+| Reverse proxy / systemd | [`NGINX_DEPLOYMENT.md`](NGINX_DEPLOYMENT.md), [`RUN_ON_SERVER.md`](RUN_ON_SERVER.md) |
 
-| Variable | Required | Purpose |
-|----------|----------|---------|
-| `SECRET_KEY` | yes | Flask session signing key. The app refuses to start without it. |
-| `SQLALCHEMY_DATABASE_URI` | yes (non-Docker) | Database URL. Docker Compose builds it from `POSTGRES_PASSWORD`. |
-| `POSTGRES_PASSWORD` | yes (Docker) | Postgres password. `docker compose` refuses to start if it is unset or empty. There is no fallback value. |
-| `ADMIN_PASSWORD` | on first boot | Creates the first admin when the users table is empty. In production, startup **fails** with a clear error if it is missing. Known defaults such as `admin123` are rejected. |
-| `ADMIN_USERNAME` / `ADMIN_EMAIL` | no | Username and email for that first admin (default `admin` / `operator@example.com`). |
-| `USER_USERNAME` / `USER_PASSWORD` | no | Optional env-based login with the `user` role. |
-| `ENVIRONMENT` | no | Defaults to production. Set `development` (or `test`) locally and in CI so an empty DB can start without `ADMIN_PASSWORD`. |
-
-Login behaviour:
-- `change-me` and `change-me` no longer exist as built-in logins. Env-based logins exist only for `ADMIN_*` / `USER_*` pairs you set.
-- Known default passwords (`admin123`, `user123`, `demo123`, `changeme123`, ...) are **refused at login**, even for existing accounts. Anyone still using one must have it reset. An admin can do that under `/admin` → Users, which now has a write-only password field.
-- `/admin` (Flask-Admin: users, tools, history, check-in/out, notifications) requires a logged-in user with role `admin`. Anonymous users are redirected to `/login`, and non-admins to `/dashboard`.
-- When `ADMIN_USERNAME`/`ADMIN_PASSWORD` are set in the environment, they work as a login for that account. Setting `ADMIN_USERNAME=admin` plus a strong `ADMIN_PASSWORD` is how to regain access if the only admin still has a default password.
-- The Postgres port is published on `127.0.0.1:5436` only (host-local).
-
-Follow-up hardening (review 2026-09-25, Medium/Low findings):
-- **Login redirect:** `/login?next=...` only follows same-site relative paths (e.g. `/reports`). Absolute or scheme-relative URLs (`https://...`, `//host`, `/\host`) are ignored and you land on `/dashboard`.
-- **`/api/user-by-badge` requires login.** The check-in/out page still works anonymously, but scanning a badge only auto-fills the username when the browser is logged in (e.g. a tool-crib kiosk account with role `user`). Otherwise type the username.
-- **`/api/checkinout` requires login and a JSON body** (`Content-Type: application/json`); other content types get `415`. This is the CSRF defence for that endpoint (cross-site forms cannot send JSON). JSON clients no longer fail with "The CSRF token is missing." Scan-gun/mobile clients must log in via `POST /login` first and reuse the session cookie. The HTML form at `/checkinout` is unchanged.
-- The session cookie is now `SameSite=Lax` (override with `SESSION_COOKIE_SAMESITE` only if you know you need to).
-- **Docker image now includes `selftest/`**, so `/api/system/health` and the startup self-tests work in the container. In the image, "Run tests" runs the startup self-tests only (the pytest suite is never shipped). On a checkout, "Run tests" runs `run_selftest.sh` against a throwaway SQLite file, never the live database. Self-test failures at startup are logged at ERROR level.
-- **`scripts/deploy.sh` fails loudly** (`set -euo pipefail`): a failed `git pull --ff-only`, `pip install`, `flask db upgrade` or frontend build stops the deploy with a non-zero exit code. The frontend is built with full `npm ci` (vite is a devDependency). Opt-outs: `SKIP_GIT_PULL=1`, `SKIP_MIGRATIONS=1`, `SKIP_FRONTEND=1`. If `flask db upgrade` fails on a database that was created by `db.create_all()` and never migrated, check the schema matches the models, then run `FLASK_APP=atems.py flask db stamp head` once.
-
-Deferred items (review 2026-09-25, final pass):
-- **"Run Full Test Suite" is admin-only.** `POST /api/system/run-tests` can run for up to 10 minutes, so it now returns `403` for logged-in users without role `admin` (anonymous users are still sent to login). The button on `/selftest` is disabled for non-admins. `GET /api/system/health` is unchanged (any logged-in user).
-- **`scripts/deploy-to-server.sh` fails loudly** (`set -euo pipefail`): a missing `npm`, a failed `npm ci` / `npm run build`, or a failed `rsync` stops the script with a non-zero exit code and shows the tool's own error output (nothing is sent to `/dev/null` any more). Nothing is synced after a failed build. Opt-out: `SKIP_FRONTEND_BUILD=1` deploys without building the frontend.
-- **`deploy_atems_postgres.sh` step 3 fails on a failed migration.** It runs `flask db upgrade` with `FLASK_APP=atems:app` (before, the missing `FLASK_APP` and a failed upgrade were both hidden behind a "Note"). A brand-new database, where the app's startup `db.create_all()` already built every table, is detected: if its schema matches the models exactly it is stamped at `head` once, then upgraded. An unversioned database whose schema differs from the models stops the deploy with the list of differences. Check the schema, then migrate it by hand or run `flask db stamp <revision>`.
-
-Upgrading an existing deployment: see the "Operator actions" list in the PR `fix/security-review-2026-09-25`. In short: set a strong `POSTGRES_PASSWORD`, `SECRET_KEY` and `ADMIN_PASSWORD` in `.env`, redeploy, then reset any account that still uses a default password.
-
----
-
-## Deployment
-
-Files for deploying ATEMS to https://example.com/app/atems.
-
-| File | Purpose |
-|------|---------|
-| `deploy_atems_postgres.sh` | **Quick Start** — Deploy ATEMS with PostgreSQL (Docker) |
-| `docker-compose.yml` | Docker services: PostgreSQL + ATEMS API |
-| `POSTGRESQL_MIGRATION.md` | PostgreSQL migration guide (SQLite → PostgreSQL) |
-| `RUN_ON_SERVER.md` | **Systemd** - Run ATEMS on the app host |
-| `NGINX_DEPLOYMENT.md` | Nginx reverse proxy setup (current standard) |
-| `web-sites-server/nginx-atems.conf` | Nginx site config (copy to /etc/nginx/sites-available/atems) |
-| `web-sites-server/atems.service` | systemd unit for gunicorn |
-| `DEPLOY_NOW.md` | Step-by-step deploy instructions |
-| `PORT_INFO.md` | Port mapping and arch |
-
-See **RUN_ON_SERVER.md** for the full setup. **docs/ATEMS_TEST_REPORT.md** for test and splash login details. **docs/USER_GUIDE.md** for quick start, login, reports, and deployment.
-
-**Ops / reliability:** API JSON errors and `X-Request-ID` for `/api/*`, DB-aware `/api/health`, and Docker healthcheck details are summarized in [IMPROVEMENTS_FROM_RANKINGS.md](IMPROVEMENTS_FROM_RANKINGS.md) (patterns aligned with rankings-bot where applicable).
+Issues and contributions: open a GitHub issue on this repository.
