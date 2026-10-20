@@ -405,4 +405,4 @@ For issues or questions:
 ---
 
 **ATEMS** - Advanced Tool & Equipment Management System  
-© 2026 Alfa Quantum Dynamics
+© 2026 Curt Alfrey

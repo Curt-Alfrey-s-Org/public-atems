@@ -211,6 +211,6 @@ For questions or issues:
 ---
 
 **ATEMS** - Advanced Tool & Equipment Management System  
-© 2026 Alfa Quantum Dynamics
+© 2026 Curt Alfrey
 
 *Built for tool crib professionals. Designed for scale.*

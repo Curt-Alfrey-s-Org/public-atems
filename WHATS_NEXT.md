@@ -229,4 +229,4 @@ python -c "from atems import create_app; from extensions import db; from models 
 **Ready to proceed?** Start with testing the new Log Viewer, then move on to Tool Categories!
 
 **ATEMS** - Advanced Tool & Equipment Management System  
-© 2026 Alfa Quantum Dynamics
+© 2026 Curt Alfrey
